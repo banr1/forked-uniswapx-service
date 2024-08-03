@@ -6,6 +6,13 @@
     "es6": true
   },
   "plugins": ["@typescript-eslint", "jest"],
+  "ignorePatterns": [
+    "node_modules/",
+    "package.json",
+    "jest.config.js",
+    "cdk.json",
+    "cdk.context.json"
+  ],
   "extends": [
     "eslint:recommended",
     "plugin:@typescript-eslint/eslint-recommended",

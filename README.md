@@ -1,4 +1,12 @@
-# UniswapX Service
+This project is a fork of [UniswapX Service](https://github.com/Uniswap/uniswapx-service).
+It is licensed under the GNU General Public License v3.0 (GPL-3.0).
+
+Copyright (C) 2024 banri
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+See the [LICENSE](LICENSE) file for details.
+
+# Forked UniswapX Service
 
 [![Unit Tests](https://github.com/Uniswap/uniswapx-service/actions/workflows/CI.yml/badge.svg)](https://github.com/Uniswap/uniswapx-service/actions/workflows/CI.yml)
 
@@ -26,7 +34,7 @@ UniswapX Service is an API to propagate signed, executable UniswapX orders. Swap
 
 ## End-to-end Tests
 
-1. Deploy your API using the intructions above.
+1. Deploy your API using the instructions above.
 
 1. Add your API url to your `.env` file as `UNISWAP_API`
 

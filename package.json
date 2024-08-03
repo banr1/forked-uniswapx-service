@@ -1,12 +1,15 @@
 {
-  "name": "@uniswap/uniswapx-service",
+  "name": "@banr1/forked-uniswapx-service",
   "version": "0.1.0",
   "bin": {
-    "app": "./dist/bin/app.js"
+    "app": "dist/bin/app.js"
   },
   "license": "GPL",
   "type": "commonjs",
-  "repository": "https://github.com/Uniswap/uniswapx-service",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/banr1/forked-uniswapx-service.git"
+  },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist cdk.out",
