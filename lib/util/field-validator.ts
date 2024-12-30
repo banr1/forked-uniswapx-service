@@ -13,10 +13,11 @@ dotenv.config()
 export const SORT_REGEX = /(\w+)\(([0-9]+)(?:,([0-9]+))?\)/
 const UINT256_MAX = BigNumber.from(1).shl(256).sub(1)
 
-const COSIGNER = checkDefined(process.env.LABS_COSIGNER)
+const COSIGNER = checkDefined(process.env.LABS_COSIGNER, 'LABS_COSIGNER is not defined')
+const PRIORITY_COSIGNER = checkDefined(process.env.LABS_PRIORITY_COSIGNER, 'LABS_PRIORITY_COSIGNER is not defined')
 
 export default class FieldValidator {
-  private static readonly ENCODED_ORDER_JOI = Joi.string().regex(this.getHexiDecimalRegex(3000, true))
+  private static readonly ENCODED_ORDER_JOI = Joi.string().regex(this.getHexiDecimalRegex(4000, true))
   private static readonly SIGNATURE_JOI = Joi.string().regex(this.getHexiDecimalRegex(130))
   private static readonly ORDER_HASH_JOI = Joi.string().regex(this.getHexiDecimalRegex(64))
   private static readonly ORDER_HASHES_JOI = Joi.string()
@@ -58,6 +59,7 @@ export default class FieldValidator {
     OrderType.Dutch,
     DUTCH_LIMIT,
     OrderType.Dutch_V2,
+    OrderType.Dutch_V3,
     OrderType.Limit,
     OrderType.Relay,
     OrderType.Priority
@@ -66,6 +68,7 @@ export default class FieldValidator {
   private static readonly GET_ORDER_TYPE_JOI = Joi.string().valid(
     OrderType.Dutch,
     OrderType.Dutch_V2,
+    OrderType.Dutch_V3,
     OrderType.Limit,
     OrderType.Relay,
     'Dutch_V1_V2',
@@ -80,6 +83,8 @@ export default class FieldValidator {
   })
 
   private static readonly COSIGNER_JOI = Joi.string().valid(COSIGNER)
+
+  private static readonly PRIORITY_COSIGNER_JOI = Joi.string().valid(PRIORITY_COSIGNER)
 
   public static isValidOrderStatus(): StringSchema {
     return this.ORDER_STATUS_JOI
@@ -153,12 +158,20 @@ export default class FieldValidator {
     return this.BIG_NUMBER_JOI
   }
 
+  public static isValidNumber(): NumberSchema {
+    return this.NUMBER_JOI
+  }
+
   public static isValidOrderHashes(): StringSchema {
     return this.ORDER_HASHES_JOI
   }
 
   public static isValidCosigner(): StringSchema {
     return this.COSIGNER_JOI
+  }
+
+  public static isValidPriorityCosigner(): StringSchema {
+    return this.PRIORITY_COSIGNER_JOI
   }
 
   private static getHexiDecimalRegex(length?: number, maxLength = false): RegExp {

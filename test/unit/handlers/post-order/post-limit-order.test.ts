@@ -162,7 +162,8 @@ describe('Testing post limit order handler.', () => {
       expect(validatorMock).toBeCalledWith(order)
       expect(kickoffOrderTrackingSfn).toHaveBeenCalledWith(
         expect.objectContaining({ orderType: 'Limit' }),
-        expect.anything()
+        expect.anything(),
+        0
       )
       expect(postOrderResponse).toEqual({
         body: JSON.stringify({ hash: expectedOrderEntity.orderHash }),
@@ -307,7 +308,7 @@ describe('Testing post limit order handler.', () => {
     it.each([
       [
         { encodedOrder: '0xbad_order' },
-        '{"detail":"\\"encodedOrder\\" with value \\"0xbad_order\\" fails to match the required pattern: /^0x[0-9,a-z,A-Z]{0,3000}$/","errorCode":"VALIDATION_ERROR"}',
+        '{"detail":"\\"encodedOrder\\" with value \\"0xbad_order\\" fails to match the required pattern: /^0x[0-9,a-z,A-Z]{0,4000}$/","errorCode":"VALIDATION_ERROR"}',
       ],
       [
         { signature: '0xbad_signature' },

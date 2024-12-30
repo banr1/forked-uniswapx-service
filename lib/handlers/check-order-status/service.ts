@@ -1,11 +1,14 @@
 import {
+  CosignedPriorityOrder,
   CosignedV2DutchOrder,
+  CosignedV3DutchOrder,
   DutchOrder,
   FillInfo,
   OrderType,
   OrderValidation,
   OrderValidator,
   UniswapXEventWatcher,
+  UniswapXOrder,
 } from '@uniswap/uniswapx-sdk'
 import { ethers } from 'ethers'
 import { ORDER_STATUS, RelayOrderEntity, SettledAmount, UniswapXOrderEntity } from '../../entities'
@@ -19,6 +22,8 @@ import { metrics } from '../../util/metrics'
 import { SfnStateInputOutput } from '../base'
 import { FillEventLogger } from './fill-event-logger'
 import { getSettledAmounts, IS_TERMINAL_STATE } from './util'
+
+const FILL_CHECK_OVERLAP_BLOCK = 20
 
 export type CheckOrderStatusRequest = {
   chainId: number
@@ -70,7 +75,7 @@ export class CheckOrderStatusService {
       `cannot find order by hash when updating order status, hash: ${orderHash}`
     )
 
-    let parsedOrder: DutchOrder | CosignedV2DutchOrder
+    let parsedOrder: UniswapXOrder
     switch (orderType) {
       case OrderType.Dutch:
       case OrderType.Limit:
@@ -78,6 +83,12 @@ export class CheckOrderStatusService {
         break
       case OrderType.Dutch_V2:
         parsedOrder = CosignedV2DutchOrder.parse(order.encodedOrder, chainId)
+        break
+      case OrderType.Dutch_V3:
+        parsedOrder = CosignedV3DutchOrder.parse(order.encodedOrder, chainId)
+        break
+      case OrderType.Priority:
+        parsedOrder = CosignedPriorityOrder.parse(order.encodedOrder, chainId)
         break
       default:
         throw new Error(`Unsupported OrderType ${orderType}, No Parser Configured`)
@@ -114,33 +125,53 @@ export class CheckOrderStatusService {
     // so check for a fillEvent
     // if no fill event, process in the unfilled path
     if (validation === OrderValidation.NonceUsed || validation === OrderValidation.Expired) {
-      const fillEvent = await this.getFillEventForOrder(orderHash, fromBlock, curBlockNumber, orderWatcher)
+      const fillEvent = await this.getFillEventForOrder(
+        orderHash,
+        fromBlock - FILL_CHECK_OVERLAP_BLOCK,
+        curBlockNumber,
+        orderWatcher
+      )
       if (fillEvent) {
-        const [tx, block] = await Promise.all([
-          provider.getTransaction(fillEvent.txHash),
-          provider.getBlock(fillEvent.blockNumber),
-        ])
-        const settledAmounts = getSettledAmounts(
-          fillEvent,
-          block.timestamp,
-          parsedOrder as DutchOrder | CosignedV2DutchOrder
-        )
+        try {
+          const [tx, block] = await Promise.all([
+            provider.getTransaction(fillEvent.txHash),
+            provider.getBlock(fillEvent.blockNumber),
+          ])
+          const settledAmounts = getSettledAmounts(
+            fillEvent,
+            {
+              timestamp: block.timestamp,
+              gasPrice: tx.gasPrice,
+              maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
+              maxFeePerGas: tx.maxFeePerGas,
+            },
+            parsedOrder as DutchOrder | CosignedV2DutchOrder | CosignedV3DutchOrder | CosignedPriorityOrder
+          )
 
-        await this.fillEventLogger.processFillEvent({
-          fillEvent,
-          quoteId,
-          chainId,
-          startingBlockNumber,
-          order,
-          settledAmounts,
-          tx,
-          timestamp: block.timestamp,
-        })
+          await this.fillEventLogger.processFillEvent({
+            fillEvent,
+            quoteId,
+            chainId,
+            startingBlockNumber,
+            order,
+            settledAmounts,
+            tx,
+            block,
+            timestamp: block.timestamp,
+          })
 
-        extraUpdateInfo = {
-          orderStatus: ORDER_STATUS.FILLED,
-          txHash: fillEvent.txHash,
-          settledAmounts,
+          extraUpdateInfo = {
+            orderStatus: ORDER_STATUS.FILLED,
+            txHash: fillEvent.txHash,
+            settledAmounts,
+          }
+        } catch (e) {
+          log.error('error processing fill event', { error: e })
+          extraUpdateInfo = {
+            orderStatus: ORDER_STATUS.FILLED,
+            txHash: '',
+            settledAmounts: [],
+          }
         }
       }
     }

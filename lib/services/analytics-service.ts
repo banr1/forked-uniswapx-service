@@ -2,7 +2,7 @@ import { Logger } from '@aws-lambda-powertools/logger'
 import { getAddress } from '@ethersproject/address'
 import { AddressZero } from '@ethersproject/constants'
 import { FillInfo, OrderType } from '@uniswap/uniswapx-sdk'
-import { isPriorityOrderEntity, ORDER_STATUS, RelayOrderEntity, SettledAmount, UniswapXOrderEntity } from '../entities'
+import { isDutchV3OrderEntity, isPriorityOrderEntity, ORDER_STATUS, RelayOrderEntity, SettledAmount, UniswapXOrderEntity } from '../entities'
 import { log } from '../Logging'
 import { currentTimestampInSeconds } from '../util/time'
 
@@ -53,6 +53,19 @@ export class AnalyticsService implements AnalyticsServiceInterface {
           outputMpsPerPriorityFeeWei: userOutput.mpsPerPriorityFeeWei,
         }),
       })
+    } else if (isDutchV3OrderEntity(order)) {
+      const userOutput = order.outputs.reduce((prev, cur) => (prev && prev.startAmount > cur.startAmount ? prev : cur))
+      this.logger.info('Analytics Message', {
+        eventType: 'OrderPosted',
+        body: Object.assign(sharedFields, {
+          startBlock: order.cosignerData.decayStartBlock,
+          inputStartAmount: order.input?.startAmount,
+          inputCurve: JSON.stringify(order.input?.curve),
+          outputStartAmount: userOutput.startAmount,
+          outputCurve: JSON.stringify(userOutput.curve),
+          startingBaseFee: order.startingBaseFee,
+        }),
+      })
     } else {
       const userOutput = order.outputs.reduce((prev, cur) => (prev && prev.startAmount > cur.startAmount ? prev : cur))
       this.logger.info('Analytics Message', {
@@ -99,6 +112,7 @@ export class AnalyticsService implements AnalyticsServiceInterface {
     gasCostInETH: string,
     gasPriceWei: string,
     gasUsed: string,
+    effectivePriorityFee: string,
     userAmount: SettledAmount
   ): void {
     log.info('Fill Info', {
@@ -124,6 +138,7 @@ export class AnalyticsService implements AnalyticsServiceInterface {
         gasPriceWei: gasPriceWei,
         gasUsed: gasUsed,
         gasCostInETH: gasCostInETH,
+        effectivePriorityFee: effectivePriorityFee,
         logTime: Math.floor(Date.now() / 1000).toString(),
       },
     })

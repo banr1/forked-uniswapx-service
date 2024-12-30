@@ -38,6 +38,7 @@ export class DutchOrdersRepository extends GenericOrdersRepository<string, strin
         cosignature: { type: DYNAMODB_TYPES.STRING },
         auctionStartBlock: { type: DYNAMODB_TYPES.NUMBER },
         baselinePriorityFeeWei: { type: DYNAMODB_TYPES.STRING },
+        startingBaseFee: { type: DYNAMODB_TYPES.STRING },
         cosigner: { type: DYNAMODB_TYPES.STRING },
 
         //on chain data
@@ -45,6 +46,7 @@ export class DutchOrdersRepository extends GenericOrdersRepository<string, strin
         offerer: { type: DYNAMODB_TYPES.STRING, required: true },
         filler: { type: DYNAMODB_TYPES.STRING },
         decayStartTime: { type: DYNAMODB_TYPES.NUMBER },
+        decayStartBlock: { type: DYNAMODB_TYPES.NUMBER },
         decayEndTime: { type: DYNAMODB_TYPES.NUMBER },
         deadline: { type: DYNAMODB_TYPES.NUMBER },
         reactor: { type: DYNAMODB_TYPES.STRING },

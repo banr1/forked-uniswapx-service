@@ -5,8 +5,12 @@ import { eventRecordToOrder } from '../../util/order'
 import { BatchFailureResponse, DynamoStreamLambdaHandler } from '../base/dynamo-stream-handler'
 import { ContainerInjected, RequestInjected } from './injector'
 import { OrderNotificationInputJoi } from './schema'
+import { CosignedV2DutchOrder, OrderType } from '@uniswap/uniswapx-sdk'
+import { DUTCHV2_ORDER_LATENCY_THRESHOLD_SEC } from '../constants'
+import { Unit } from 'aws-embedded-metrics'
+import { ChainId } from '../../util/chain'
 
-const WEBHOOK_TIMEOUT_MS = 500
+const WEBHOOK_TIMEOUT_MS = 200
 
 export class OrderNotificationHandler extends DynamoStreamLambdaHandler<ContainerInjected, RequestInjected> {
   public async handleRequest(input: {
@@ -23,6 +27,27 @@ export class OrderNotificationHandler extends DynamoStreamLambdaHandler<Containe
       try {
         const newOrder = eventRecordToOrder(record)
 
+        // Log the decay start time difference for debugging
+        if (newOrder.orderType == OrderType.Dutch_V2) {
+          const order = CosignedV2DutchOrder.parse(newOrder.encodedOrder, newOrder.chainId)
+          const decayStartTime = order.info.cosignerData.decayStartTime
+          const currentTime = Math.floor(Date.now() / 1000) // Convert to seconds
+          const decayTimeDifference = Number(decayStartTime) - currentTime
+          if (record.dynamodb && record.dynamodb.ApproximateCreationDateTime) {
+            const recordTimeDifference = record.dynamodb.ApproximateCreationDateTime - currentTime
+            const staleRecordMetricName = `NotificationRecordStaleness-chain-${newOrder.chainId.toString()}`
+            metrics.putMetric(staleRecordMetricName, recordTimeDifference)
+          }
+
+          // GPA currently sets mainnet decay start to 24 secs into the future
+          if (newOrder.chainId == ChainId.MAINNET && decayTimeDifference > DUTCHV2_ORDER_LATENCY_THRESHOLD_SEC) {
+            const staleOrderMetricName = `NotificationStaleOrder-chain-${newOrder.chainId.toString()}`
+            metrics.putMetric(staleOrderMetricName, 1, Unit.Count)
+          }
+          const orderStalenessMetricName = `NotificationOrderStaleness-chain-${newOrder.chainId.toString()}`
+          metrics.putMetric(orderStalenessMetricName, decayTimeDifference)
+        }
+
         const registeredEndpoints = await webhookProvider.getEndpoints({
           offerer: newOrder.swapper,
           orderStatus: newOrder.orderStatus,
@@ -32,7 +57,9 @@ export class OrderNotificationHandler extends DynamoStreamLambdaHandler<Containe
 
         log.info({ order: newOrder, registeredEndpoints }, 'Sending order to registered webhooks.')
 
-        const requests: Promise<AxiosResponse>[] = registeredEndpoints.map((endpoint) =>
+        // Randomize the order to prevent any filler from having a consistent advantage
+        const shuffledEndpoints = [...registeredEndpoints].sort(() => Math.random())
+        const requests: Promise<AxiosResponse>[] = shuffledEndpoints.map((endpoint) =>
           axios.post(
             endpoint.url,
             {

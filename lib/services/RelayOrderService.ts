@@ -122,7 +122,10 @@ export class RelayOrderService {
     quoteId: string | undefined,
     orderType: OrderType
   ) {
-    const stateMachineArn = checkDefined(process.env[`STATE_MACHINE_ARN_${chainId}`])
+    const stateMachineArn = checkDefined(
+      process.env[`STATE_MACHINE_ARN_${chainId}`],
+      `STATE_MACHINE_ARN_${chainId} not found`
+    )
     await kickoffOrderTrackingSfn(
       {
         orderHash: orderHash,
@@ -273,6 +276,7 @@ export class RelayOrderService {
       order,
       settledAmounts,
       tx,
+      block,
       timestamp: block.timestamp,
     })
 

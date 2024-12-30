@@ -4,6 +4,7 @@ import { KmsSigner } from '@uniswap/signer'
 import {
   CosignedPriorityOrder,
   CosignedV2DutchOrder,
+  CosignedV3DutchOrder,
   DutchOrder,
   OrderType,
   OrderValidation,
@@ -16,6 +17,7 @@ import { OrderValidationFailedError } from '../errors/OrderValidationFailedError
 import { TooManyOpenOrdersError } from '../errors/TooManyOpenOrdersError'
 import { GetOrdersQueryParams } from '../handlers/get-orders/schema'
 import { GetDutchV2OrderResponse } from '../handlers/get-orders/schema/GetDutchV2OrderResponse'
+import { GetDutchV3OrderResponse } from '../handlers/get-orders/schema/GetDutchV3OrderResponse'
 import { GetOrdersResponse } from '../handlers/get-orders/schema/GetOrdersResponse'
 import { GetPriorityOrderResponse } from '../handlers/get-orders/schema/GetPriorityOrderResponse'
 import { OnChainValidatorMap } from '../handlers/OnChainValidatorMap'
@@ -23,6 +25,7 @@ import { ProviderMap } from '../handlers/shared'
 import { kickoffOrderTrackingSfn } from '../handlers/shared/sfn'
 import { DutchV1Order } from '../models/DutchV1Order'
 import { DutchV2Order } from '../models/DutchV2Order'
+import { DutchV3Order } from '../models/DutchV3Order'
 import { LimitOrder } from '../models/LimitOrder'
 import { PriorityOrder } from '../models/PriorityOrder'
 import { checkDefined } from '../preconditions/preconditions'
@@ -44,24 +47,30 @@ export class UniswapXOrderService {
     private readonly providerMap: ProviderMap
   ) {}
 
-  async createOrder(order: DutchV1Order | LimitOrder | DutchV2Order | PriorityOrder): Promise<string> {
+  async createOrder(order: DutchV1Order | LimitOrder | DutchV2Order | PriorityOrder | DutchV3Order): Promise<string> {
     let orderEntity
     if (order instanceof DutchV1Order || order instanceof LimitOrder) {
       await this.validateOrder(order.inner, order.signature, order.chainId)
       orderEntity = formatOrderEntity(order.inner, order.signature, OrderType.Dutch, ORDER_STATUS.OPEN, order.quoteId)
-    } else if (order instanceof DutchV2Order) {
+    } else if (order instanceof DutchV2Order || order instanceof DutchV3Order) {
       await this.validateOrder(order.inner, order.signature, order.chainId)
       orderEntity = order.toEntity(ORDER_STATUS.OPEN)
     } else if (order instanceof PriorityOrder) {
-      await this.validateOrder(order.inner, order.signature, order.chainId)
-
       // following https://github.com/Uniswap/uniswapx-parameterization-api/pull/358
       // recreate KmsSigner every request
       const kmsKeyId = checkDefined(process.env.KMS_KEY_ID, 'KMS_KEY_ID is not defined')
       const awsRegion = checkDefined(process.env.REGION, 'REGION is not defined')
       const cosigner = new KmsSigner(new KMSClient({ region: awsRegion }), kmsKeyId)
-      const provider = checkDefined(this.providerMap.get(order.chainId))
-      orderEntity = (await order.reparameterizeAndCosign(provider, cosigner)).toEntity(ORDER_STATUS.OPEN)
+      const provider = checkDefined(
+        this.providerMap.get(order.chainId),
+        `provider not found for chainId: ${order.chainId}`
+      )
+
+      const cosignedOrder = await order.reparameterizeAndCosign(provider, cosigner)
+      this.logger.info('cosigned priority order', { order: cosignedOrder })
+
+      await this.validateOrder(cosignedOrder.inner, cosignedOrder.signature, cosignedOrder.chainId)
+      orderEntity = cosignedOrder.toEntity(ORDER_STATUS.OPEN)
     } else {
       throw new Error('unsupported OrderType')
     }
@@ -84,7 +93,7 @@ export class UniswapXOrderService {
   }
 
   private async validateOrder(
-    order: DutchOrder | CosignedV2DutchOrder | CosignedPriorityOrder,
+    order: DutchOrder | CosignedV2DutchOrder | CosignedPriorityOrder | CosignedV3DutchOrder,
     signature: string,
     chainId: number
   ): Promise<void> {
@@ -95,6 +104,10 @@ export class UniswapXOrderService {
 
     const onChainValidator = this.onChainValidatorMap.get(chainId)
     const onChainValidationResult = await onChainValidator.validate({ order: order, signature: signature })
+
+    // Still considered valid
+    if (order instanceof CosignedPriorityOrder && onChainValidationResult == OrderValidation.OrderNotFillableYet) return
+
     if (onChainValidationResult !== OrderValidation.OK) {
       const failureReason = OrderValidation[onChainValidationResult]
       throw new OrderValidationFailedError(`Onchain validation failed: ${failureReason}`)
@@ -148,7 +161,10 @@ export class UniswapXOrderService {
     quoteId: string | undefined,
     orderType: OrderType
   ) {
-    const stateMachineArn = checkDefined(process.env[`STATE_MACHINE_ARN_${chainId}`])
+    const stateMachineArn = checkDefined(
+      process.env[`STATE_MACHINE_ARN_${chainId}`],
+      `STATE_MACHINE_ARN_${chainId} is undefined`
+    )
     await kickoffOrderTrackingSfn(
       {
         orderHash: orderHash,
@@ -158,7 +174,8 @@ export class UniswapXOrderService {
         orderType,
         stateMachineArn,
       },
-      stateMachineArn
+      stateMachineArn,
+      0
     )
   }
 
@@ -214,6 +231,36 @@ export class UniswapXOrderService {
     }
 
     return { orders: dutchV2OrderResponses, cursor: queryResults.cursor }
+  }
+
+  public async getDutchV3Orders(
+    limit: number,
+    params: GetOrdersQueryParams,
+    cursor: string | undefined
+  ): Promise<GetOrdersResponse<GetDutchV3OrderResponse>> {
+    let queryResults = await this.repository.getOrdersFilteredByType(limit, params, [OrderType.Dutch_V3], cursor)
+    const dutchV3QueryResults = [...queryResults.orders]
+
+    let retryCount = 0
+    while (dutchV3QueryResults.length < limit && queryResults.cursor && retryCount < MAX_QUERY_RETRY) {
+      queryResults = await this.repository.getOrdersFilteredByType(
+        limit,
+        params,
+        [OrderType.Dutch_V3],
+        queryResults.cursor
+      )
+      dutchV3QueryResults.push(...queryResults.orders)
+      retryCount++
+    }
+
+    const dutchV3OrderResponses: GetDutchV3OrderResponse[] = []
+    for (let i = 0; i < dutchV3QueryResults.length; i++) {
+      const order = dutchV3QueryResults[i]
+      const dutchV3Order = DutchV3Order.fromEntity(order)
+      dutchV3OrderResponses.push(dutchV3Order.toGetResponse())
+    }
+
+    return { orders: dutchV3OrderResponses, cursor: queryResults.cursor }
   }
 
   public async getDutchOrders(

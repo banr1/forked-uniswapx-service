@@ -11,7 +11,7 @@ import * as aws_lambda_nodejs from 'aws-cdk-lib/aws-lambda-nodejs'
 import { Queue } from 'aws-cdk-lib/aws-sqs'
 import { Construct } from 'constructs'
 import * as path from 'path'
-import { ChainId, SUPPORTED_CHAINS } from '../../lib/util/chain'
+import { SUPPORTED_CHAINS } from '../../lib/util/chain'
 import { STAGE } from '../../lib/util/stage'
 import { SERVICE_NAME } from '../constants'
 import { CronStack } from './cron-stack'
@@ -53,6 +53,7 @@ export class LambdaStack extends cdk.NestedStack {
     const { provisionedConcurrency, kmsKey, tableCapacityConfig, indexCapacityConfig, chatbotSNSArn } = props
 
     const lambdaName = `${SERVICE_NAME}Lambda`
+    const orderNotificationProvisionedConcurrency = 50
 
     const lambdaRole = new aws_iam.Role(this, `${lambdaName}-LambdaRole`, {
       assumedBy: new aws_iam.ServicePrincipal('lambda.amazonaws.com'),
@@ -118,7 +119,7 @@ export class LambdaStack extends cdk.NestedStack {
       ...props.envVars,
       stage: props.stage as STAGE,
       KMS_KEY_ID: kmsKey.keyId,
-      VERSION: '3',
+      VERSION: '4',
       NODE_OPTIONS: '--enable-source-maps',
     }
 
@@ -142,7 +143,8 @@ export class LambdaStack extends cdk.NestedStack {
       runtime: aws_lambda.Runtime.NODEJS_18_X,
       entry: path.join(__dirname, '../../lib/handlers/order-notification/index.ts'),
       handler: 'orderNotificationHandler',
-      memorySize: 512,
+      retryAttempts: 0,
+      memorySize: 1024,
       timeout: Duration.seconds(29),
       bundling: {
         minify: true,
@@ -152,7 +154,7 @@ export class LambdaStack extends cdk.NestedStack {
         ...props.envVars,
         stage: props.stage as STAGE,
         KMS_KEY_ID: kmsKey.keyId,
-        VERSION: '2',
+        VERSION: '3',
         NODE_OPTIONS: '--enable-source-maps',
       },
       vpc,
@@ -164,9 +166,10 @@ export class LambdaStack extends cdk.NestedStack {
     const notificationConfig = {
       startingPosition: aws_lambda.StartingPosition.TRIM_HORIZON,
       batchSize: 1,
-      retryAttempts: 1,
+      retryAttempts: 0,
       bisectBatchOnError: true,
       reportBatchItemFailures: true,
+      parallelizationFactor: 10,
     }
 
     // TODO: add alarms on the size of this dead letter queue
@@ -191,12 +194,12 @@ export class LambdaStack extends cdk.NestedStack {
       ...props.envVars,
       stage: props.stage as STAGE,
       KMS_KEY_ID: kmsKey.keyId,
-      VERSION: '3',
+      VERSION: '4',
       NODE_OPTIONS: '--enable-source-maps',
       REGION: this.region,
     }
 
-    SUPPORTED_CHAINS.forEach((chainId: ChainId) => {
+    SUPPORTED_CHAINS.forEach((chainId) => {
       postOrderEnv[`STATE_MACHINE_ARN_${chainId}`] = sfnStack.chainIdToStatusTrackingStateMachineArn[chainId]
     })
 
@@ -259,7 +262,7 @@ export class LambdaStack extends cdk.NestedStack {
         ...props.envVars,
         stage: props.stage as STAGE,
         KMS_KEY_ID: kmsKey.keyId,
-        VERSION: '2',
+        VERSION: '3',
         NODE_OPTIONS: '--enable-source-maps',
       },
       tracing: aws_lambda.Tracing.ACTIVE,
@@ -279,7 +282,7 @@ export class LambdaStack extends cdk.NestedStack {
         stage: props.stage as STAGE,
         ...props.envVars,
         KMS_KEY_ID: kmsKey.keyId,
-        VERSION: '2',
+        VERSION: '3',
         NODE_OPTIONS: '--enable-source-maps',
       },
     })
@@ -298,7 +301,7 @@ export class LambdaStack extends cdk.NestedStack {
         stage: props.stage as STAGE,
         KMS_KEY_ID: kmsKey.keyId,
         ...props.envVars,
-        VERSION: '2',
+        VERSION: '3',
         NODE_OPTIONS: '--enable-source-maps',
       },
     })
@@ -364,7 +367,7 @@ export class LambdaStack extends cdk.NestedStack {
     this.orderNotificationLambdaAlias = new aws_lambda.Alias(this, `OrderNotificationAlias`, {
       aliasName: 'live',
       version: this.orderNotificationLambda.currentVersion,
-      provisionedConcurrentExecutions: enableProvisionedConcurrency ? provisionedConcurrency : undefined,
+      provisionedConcurrentExecutions: orderNotificationProvisionedConcurrency,
     })
 
     if (enableProvisionedConcurrency) {
@@ -473,7 +476,7 @@ export class LambdaStack extends cdk.NestedStack {
 
       const orderNotificationLambdaTarget = new asg.ScalableTarget(this, `OrderNotificationLambda-ProvConcASG`, {
         serviceNamespace: asg.ServiceNamespace.LAMBDA,
-        maxCapacity: provisionedConcurrency * 2,
+        maxCapacity: provisionedConcurrency * 4,
         minCapacity: provisionedConcurrency,
         resourceId: `function:${this.orderNotificationLambdaAlias.lambda.functionName}:${this.orderNotificationLambdaAlias.aliasName}`,
         scalableDimension: 'lambda:function:ProvisionedConcurrency',
@@ -482,7 +485,7 @@ export class LambdaStack extends cdk.NestedStack {
       orderNotificationLambdaTarget.node.addDependency(this.orderNotificationLambdaAlias)
 
       orderNotificationLambdaTarget.scaleToTrackMetric(`OrderNotificationLambda-ProvConcTracking`, {
-        targetValue: 0.8,
+        targetValue: 0.5,
         predefinedMetric: asg.PredefinedMetric.LAMBDA_PROVISIONED_CONCURRENCY_UTILIZATION,
       })
     }

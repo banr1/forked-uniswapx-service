@@ -25,7 +25,8 @@ export class CheckOrderStatusHandler extends SfnLambdaHandler<ContainerInjected,
     requestInjected: RequestInjected
   }): Promise<SfnStateInputOutput> {
     //make sure to change "Variable": "$.retryCount", in order-tracking-sfn.json to be 1+retryCount
-    if (input.requestInjected?.retryCount > 300) {
+    const retryCount = input.requestInjected?.retryCount ?? 0
+    if (retryCount > 300) {
       const stateMachineArn = input.requestInjected.stateMachineArn
       await kickoffOrderTrackingSfn(
         {
@@ -36,7 +37,8 @@ export class CheckOrderStatusHandler extends SfnLambdaHandler<ContainerInjected,
           orderType: input.requestInjected.orderType,
           stateMachineArn: input.requestInjected.stateMachineArn,
         },
-        stateMachineArn
+        stateMachineArn,
+        retryCount
       )
       powertoolsMetric
         .singleMetric()
@@ -66,7 +68,7 @@ export class CheckOrderStatusHandler extends SfnLambdaHandler<ContainerInjected,
         stateMachineArn: input.requestInjected.stateMachineArn,
       }
     } else {
-      // Dutch, Dutch_V2
+      // Dutch, Dutch_V2, Dutch_V3, Priority
       const response = await this.checkOrderStatusService.handleRequest(input.requestInjected)
       return {
         ...response,

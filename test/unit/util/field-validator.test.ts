@@ -103,7 +103,7 @@ describe('Testing each field on the FieldValidator class.', () => {
       const validatedField = FieldValidator.isValidEncodedOrder().validate(invalidOrder)
       expect(validatedField.error).toBeTruthy()
       expect(validatedField.error?.details[0].message).toEqual(
-        `"value" with value "${invalidOrder}" fails to match the required pattern: /^0x[0-9,a-z,A-Z]{0,3000}$/`
+        `"value" with value "${invalidOrder}" fails to match the required pattern: /^0x[0-9,a-z,A-Z]{0,4000}$/`
       )
     })
   })
@@ -274,7 +274,7 @@ describe('Testing each field on the FieldValidator class.', () => {
       const validatedField = FieldValidator.isValidOrderType().validate(orderType)
       expect(validatedField.error).toBeTruthy()
       expect(validatedField.error?.details[0].message).toEqual(
-        '"value" must be one of [Dutch, DutchLimit, Dutch_V2, Limit, Relay, Priority]'
+        '"value" must be one of [Dutch, DutchLimit, Dutch_V2, Dutch_V3, Limit, Relay, Priority]'
       )
     })
   })
